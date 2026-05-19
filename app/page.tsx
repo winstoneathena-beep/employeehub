@@ -14,7 +14,7 @@ export default function HubPage() {
       <main className="mx-auto w-full max-w-5xl px-4 pt-28 pb-20 sm:px-6">
         <WelcomeHeader />
 
-        <section id="tools" className="mt-12">
+        <section id="tools" className="mt-12 scroll-mt-28">
           <div className="mb-4 flex items-baseline justify-between">
             <h2 className="text-sm font-semibold tracking-wide text-muted-foreground uppercase">
               Available tools

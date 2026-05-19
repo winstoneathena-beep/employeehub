@@ -1,10 +1,6 @@
 "use client";
 
-import {
-  motion,
-  useMotionValue,
-  useTransform,
-} from "motion/react";
+import { motion } from "motion/react";
 import type { ReactNode } from "react";
 import { TravelingBeam } from "./traveling-beam";
 import { ParkwellMark } from "./parkwell-mark";
@@ -25,8 +21,8 @@ const widthClass = {
 
 /**
  * Glass card frame used for every auth surface.
- * Handles: 3D mouse tilt, animated traveling beams, corner glows,
- * Parkwell wordmark header, glassmorphism background.
+ * Handles: animated traveling beams, corner glows, Parkwell wordmark
+ * header, glassmorphism background. Lifts subtly on hover.
  *
  * The form/content lives in `children`.
  */
@@ -36,41 +32,23 @@ export function AuthCardFrame({
   children,
   width = "sm",
 }: Props) {
-  const mouseX = useMotionValue(0);
-  const mouseY = useMotionValue(0);
-  const rotateX = useTransform(mouseY, [-300, 300], [8, -8]);
-  const rotateY = useTransform(mouseX, [-300, 300], [-8, 8]);
-
-  const onMove = (e: React.MouseEvent) => {
-    const r = e.currentTarget.getBoundingClientRect();
-    mouseX.set(e.clientX - r.left - r.width / 2);
-    mouseY.set(e.clientY - r.top - r.height / 2);
-  };
-  const onLeave = () => {
-    mouseX.set(0);
-    mouseY.set(0);
-  };
-
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.6 }}
       className={cn("relative z-10 mx-auto w-full", widthClass[width])}
-      style={{ perspective: 1500 }}
     >
       <motion.div
         className="relative"
-        style={{ rotateX, rotateY, transformStyle: "preserve-3d" }}
-        onMouseMove={onMove}
-        onMouseLeave={onLeave}
-        whileHover={{ z: 10 }}
+        whileHover={{ y: -2 }}
+        transition={{ type: "spring", stiffness: 300, damping: 24 }}
       >
         <div className="group relative">
           {/* Ambient card glow */}
           <motion.div
             aria-hidden
-            className="absolute -inset-[1px] rounded-2xl opacity-0 transition-opacity duration-700 group-hover:opacity-70"
+            className="pointer-events-none absolute -inset-[1px] rounded-2xl opacity-0 transition-opacity duration-700 group-hover:opacity-70"
             animate={{
               boxShadow: [
                 "0 0 10px 2px rgba(25,178,236,0.05)",
@@ -137,7 +115,10 @@ export function AuthCardFrame({
           </div>
 
           {/* Card border hover */}
-          <div className="absolute -inset-[0.5px] rounded-2xl bg-gradient-to-r from-white/[0.03] via-white/[0.08] to-white/[0.03] opacity-0 transition-opacity duration-500 group-hover:opacity-70" />
+          <div
+            aria-hidden
+            className="pointer-events-none absolute -inset-[0.5px] rounded-2xl bg-gradient-to-r from-white/[0.03] via-white/[0.08] to-white/[0.03] opacity-0 transition-opacity duration-500 group-hover:opacity-70"
+          />
 
           {/* Glass card body */}
           <div className="relative overflow-hidden rounded-2xl border border-white/[0.06] bg-black/40 p-6 shadow-2xl backdrop-blur-xl">

@@ -29,13 +29,17 @@ export function AuthInput({
       whileHover={{ scale: 1.005 }}
       transition={{ type: "spring", stiffness: 400, damping: 25 }}
     >
-      <div className="absolute -inset-[0.5px] rounded-lg bg-gradient-to-r from-white/10 via-white/5 to-white/10 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -inset-[0.5px] rounded-lg bg-gradient-to-r from-white/10 via-white/5 to-white/10 opacity-0 transition-opacity duration-300 group-hover:opacity-100"
+      />
 
       <div className="relative flex items-center overflow-hidden rounded-lg">
         {icon ? (
           <div
+            aria-hidden
             className={cn(
-              "absolute left-3 flex h-4 w-4 items-center justify-center transition-colors duration-300",
+              "pointer-events-none absolute left-3 flex h-4 w-4 items-center justify-center transition-colors duration-300",
               isFocused ? "text-white" : "text-white/40",
             )}
           >
