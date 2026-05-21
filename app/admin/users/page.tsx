@@ -4,6 +4,7 @@ import { ArrowLeft, UsersIcon } from "lucide-react";
 import { desc } from "drizzle-orm";
 import { db, users } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
+import { syncUserToDb } from "@/lib/sync-user";
 import { PillNavbar } from "@/components/hub/pill-navbar";
 import { UsersTable } from "@/components/admin/users-table";
 
@@ -15,6 +16,12 @@ export const dynamic = "force-dynamic";
 
 export default async function UsersPage() {
   const { userId: currentClerkUserId } = await requireAdmin();
+
+  // Last-resort backfill for the current admin — if they predate the
+  // webhook sync code, their row might be missing. syncUserToDb is an
+  // idempotent upsert, so calling it every page render is safe; cost is
+  // one Clerk API call per /admin/users visit.
+  await syncUserToDb(currentClerkUserId);
 
   const allUsers = await db
     .select()

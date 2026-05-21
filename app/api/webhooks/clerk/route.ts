@@ -11,6 +11,7 @@ import { env } from "@/lib/env";
 import { db, users } from "@/lib/db";
 import { audit } from "@/lib/audit";
 import { isAdminEmail } from "@/lib/admin-emails";
+import { syncUserToDb } from "@/lib/sync-user";
 
 /**
  * Clerk webhook receiver.
@@ -259,12 +260,16 @@ async function handleSessionCreated(data: SessionJSON, req: Request) {
     .limit(1);
 
   if (!userRow[0]) {
-    // user.created hasn't been processed yet (or race condition). Skip the
-    // lastSignInAt update — next sign-in will catch up.
-    console.warn(
-      `[clerk-webhook] session.created for unknown user ${userId} — skipping`,
-    );
-    return;
+    // User predates the sync code OR user.created event hasn't been
+    // processed yet. Backfill from Clerk so they show up in /admin/users
+    // immediately instead of having to wait for a profile edit.
+    const result = await syncUserToDb(userId);
+    if (result.status !== "synced") {
+      console.warn(
+        `[clerk-webhook] session.created backfill skipped for ${userId}: ${result.reason}`,
+      );
+      return;
+    }
   }
 
   await db
@@ -272,9 +277,17 @@ async function handleSessionCreated(data: SessionJSON, req: Request) {
     .set({ lastSignInAt: new Date() })
     .where(eq(users.clerkUserId, userId));
 
+  // Re-query for the audit log — userRow may have been from before the
+  // backfill, or undefined entirely.
+  const final = await db
+    .select({ email: users.email })
+    .from(users)
+    .where(eq(users.clerkUserId, userId))
+    .limit(1);
+
   await audit({
     action: "user.signed_in",
-    actor: { clerkUserId: userId, email: userRow[0].email },
+    actor: { clerkUserId: userId, email: final[0]?.email ?? null },
     request: req,
   });
 }
