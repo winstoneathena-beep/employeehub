@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
-import { auth, currentUser } from "@clerk/nextjs/server";
+import { auth, clerkClient, currentUser } from "@clerk/nextjs/server";
+import { isAdminEmail } from "@/lib/admin-emails";
 
 /**
  * Role helpers built on top of Clerk's auth() / currentUser().
@@ -41,6 +42,12 @@ export async function getCurrentRole(): Promise<AppRole | null> {
  *   - Signed-in but not admin → redirect to / (no error page; failure
  *     is silent so we don't reveal that /admin/* exists)
  *   - Admin → returns the userId for the page to use
+ *
+ * Self-healing for bootstrap admins: if publicMetadata.role is missing
+ * but the user's email is in ADMIN_EMAILS, we promote them here and now
+ * (writes publicMetadata so subsequent checks are fast). Covers the case
+ * where a bootstrap admin signed up BEFORE the webhook started syncing
+ * roles — they'd otherwise be locked out of /admin forever.
  */
 export async function requireAdmin(): Promise<{ userId: string }> {
   const { userId } = await auth();
@@ -48,10 +55,37 @@ export async function requireAdmin(): Promise<{ userId: string }> {
     redirect("/sign-in");
   }
 
-  const role = await getCurrentRole();
-  if (role !== "admin") {
-    redirect("/");
+  const user = await currentUser();
+  if (!user) {
+    redirect("/sign-in");
   }
 
-  return { userId };
+  const declaredRole = (
+    user.publicMetadata as { role?: string } | undefined
+  )?.role;
+  if (declaredRole === "admin") {
+    return { userId };
+  }
+
+  // Self-heal: bootstrap admins whose Clerk metadata isn't set yet.
+  const primaryEmail =
+    user.emailAddresses.find((e) => e.id === user.primaryEmailAddressId)
+      ?.emailAddress ?? user.emailAddresses[0]?.emailAddress;
+
+  if (isAdminEmail(primaryEmail)) {
+    try {
+      const client = await clerkClient();
+      await client.users.updateUserMetadata(userId, {
+        publicMetadata: { role: "admin" },
+      });
+    } catch (err) {
+      console.error(
+        "[requireAdmin] bootstrap publicMetadata sync failed:",
+        err,
+      );
+    }
+    return { userId };
+  }
+
+  redirect("/");
 }
