@@ -4,7 +4,7 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
  * Auth gating for Parkwell TeamHub.
  *
  * Public routes (anyone can hit):
- *   /sign-in, /sign-up, /verify
+ *   /sign-in, /sign-up, /verify, /forgot-password
  *   /api/webhooks/*  (Clerk + Resend post here)
  *
  * Everything else requires a signed-in session. The /admin/* role check
@@ -21,6 +21,7 @@ const isPublicRoute = createRouteMatcher([
   "/sign-in(.*)",
   "/sign-up(.*)",
   "/verify(.*)",
+  "/forgot-password(.*)",
   "/api/webhooks/(.*)",
 ]);
 
