@@ -18,33 +18,35 @@ export default function AdminPage() {
 
           <div className="space-y-2">
             <p className="text-sm font-medium text-parkwell-blue">
-              Admin · Approver area
+              Admin
             </p>
             <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-              Approval workflow lands in PR 2.
+              User management lands in PR 2B.
             </h1>
             <p className="max-w-xl text-sm text-muted-foreground">
-              Once Clerk is wired, this page lists pending sign-ups for
-              director approval. Approve or reject from here; users receive
-              the confirmation email automatically.
+              Sign-up is open to anyone with a verified <code>@goparkwell.com</code> email
+              — no director approval needed. This page will eventually show the
+              full user list, let admins demote / remove accounts, and surface
+              an audit log of significant events.
             </p>
           </div>
 
           <div className="grid w-full gap-3 sm:grid-cols-2">
             <div className="rounded-2xl border border-dashed border-border bg-muted/30 p-5">
               <p className="text-sm font-semibold text-foreground">
-                /admin/pending
+                /admin/users
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
-                Queue of unapproved accounts with approve / reject actions.
+                Full user list with role management and last-active timestamps.
               </p>
             </div>
             <div className="rounded-2xl border border-dashed border-border bg-muted/30 p-5">
               <p className="text-sm font-semibold text-foreground">
-                /admin/users
+                /admin/audit
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
-                Full user list, role management, audit log.
+                Append-only log of sign-ups, sign-ins, role changes, and
+                deletions.
               </p>
             </div>
           </div>

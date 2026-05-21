@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useAuth, UserButton } from "@clerk/nextjs";
 import { Home, LayoutGrid, Shield, User } from "lucide-react";
 import { motion } from "motion/react";
 import { ThemeToggle } from "./theme-toggle";
@@ -11,7 +12,7 @@ type Item = {
   label: string;
   href: string;
   icon: typeof Home;
-  /** Only show when the current user has approver/admin role (stubbed for now). */
+  /** Hidden in PR 2A until we have roles; will become role-gated in PR 2B. */
   privileged?: boolean;
 };
 
@@ -25,11 +26,16 @@ const items: Item[] = [
  * Persistent pill-shaped navbar floating at the top-center of every Hub page.
  * Glass effect, adaptive to light/dark theme.
  *
- * For PR 1 we always show all items; once Clerk is wired, hide `privileged`
- * items unless the user's role qualifies.
+ * Auth-aware:
+ * - Signed out → shows a sign-in link icon
+ * - Signed in  → shows Clerk's UserButton (avatar + dropdown for profile, sign out)
+ *
+ * Role gating for the "Admin" item is still permissive in PR 2A —
+ * locked down in PR 2B once we can read approver/admin from the DB.
  */
 export function PillNavbar() {
   const pathname = usePathname();
+  const { isLoaded, isSignedIn } = useAuth();
 
   return (
     <nav className="pointer-events-none fixed top-4 left-0 right-0 z-50 flex justify-center px-4">
@@ -68,13 +74,31 @@ export function PillNavbar() {
 
         <ThemeToggle className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" />
 
-        <Link
-          href="/sign-in"
-          aria-label="Account"
-          className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        >
-          <User className="h-3.5 w-3.5" />
-        </Link>
+        {/* Account slot. Render a skeleton while Clerk loads so the navbar
+            doesn't pop in/out. */}
+        {!isLoaded ? (
+          <div className="h-7 w-7" aria-hidden />
+        ) : isSignedIn ? (
+          <div className="flex h-7 w-7 items-center justify-center">
+            <UserButton
+              appearance={{
+                elements: {
+                  avatarBox: "h-6 w-6",
+                  userButtonPopoverCard:
+                    "bg-card border border-border shadow-xl",
+                },
+              }}
+            />
+          </div>
+        ) : (
+          <Link
+            href="/sign-in"
+            aria-label="Sign in"
+            className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <User className="h-3.5 w-3.5" />
+          </Link>
+        )}
       </motion.div>
     </nav>
   );

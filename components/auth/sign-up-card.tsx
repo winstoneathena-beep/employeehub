@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useSignUp } from "@clerk/nextjs";
 import {
   Briefcase,
   Eye,
@@ -29,6 +30,8 @@ type FocusKey =
 
 export function SignUpCard() {
   const router = useRouter();
+  const { signUp, fetchStatus } = useSignUp();
+
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
@@ -39,6 +42,8 @@ export function SignUpCard() {
   const [focused, setFocused] = useState<FocusKey>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const isReady = !!signUp && fetchStatus !== "fetching";
 
   function validate(): string | null {
     if (!email.toLowerCase().endsWith(ALLOWED_DOMAIN)) {
@@ -53,8 +58,10 @@ export function SignUpCard() {
     return null;
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!signUp) return;
+
     const v = validate();
     if (v) {
       setError(v);
@@ -62,11 +69,43 @@ export function SignUpCard() {
     }
     setError(null);
     setIsLoading(true);
-    // TODO(clerk): replace with Clerk signUp.create() + send verification once env keys are set
-    setTimeout(() => {
+
+    // Step 1: create the in-progress sign-up with user-provided fields.
+    // `unsafeMetadata.role` is the supported way to attach the department/role
+    // string; the webhook (PR 2B) mirrors this into pending_users.role.
+    const { error: createError } = await signUp.create({
+      emailAddress: email,
+      password,
+      firstName,
+      lastName,
+      unsafeMetadata: { role },
+    });
+
+    if (createError) {
+      setError(
+        createError.longMessage ??
+          createError.message ??
+          "Sign up failed",
+      );
       setIsLoading(false);
-      router.push("/verify");
-    }, 1500);
+      return;
+    }
+
+    // Step 2: trigger the 6-digit verification email.
+    const { error: sendError } = await signUp.verifications.sendEmailCode();
+
+    if (sendError) {
+      setError(
+        sendError.longMessage ??
+          sendError.message ??
+          "Could not send verification code",
+      );
+      setIsLoading(false);
+      return;
+    }
+
+    // Don't clear isLoading on success — navigating away.
+    router.push("/verify");
   }
 
   return (
@@ -170,23 +209,27 @@ export function SignUpCard() {
           minLength={8}
         />
 
+        {/* Required by Clerk's bot-protection / CAPTCHA when enabled in the
+            dashboard. Harmless to keep even when not configured. */}
+        <div id="clerk-captcha" />
+
         {error ? (
           <motion.p
             initial={{ opacity: 0, y: -4 }}
             animate={{ opacity: 1, y: 0 }}
             className="rounded-md border border-parkwell-red/30 bg-parkwell-red/10 px-3 py-2 text-xs text-parkwell-red"
+            role="alert"
           >
             {error}
           </motion.p>
         ) : null}
 
         <p className="text-[11px] leading-relaxed text-white/50">
-          After verification, your account will wait in pending state until a
-          Parkwell director approves it. You&apos;ll receive an email when
-          you&apos;re ready to sign in.
+          We&apos;ll email you a 6-digit code to confirm your address. Once
+          you enter it, you&apos;re straight into TeamHub.
         </p>
 
-        <AuthSubmitButton isLoading={isLoading} className="mt-2">
+        <AuthSubmitButton isLoading={isLoading} disabled={!isReady} className="mt-2">
           Create account
         </AuthSubmitButton>
 

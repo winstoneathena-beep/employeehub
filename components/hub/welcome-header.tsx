@@ -1,5 +1,6 @@
 "use client";
 
+import { useUser } from "@clerk/nextjs";
 import { motion } from "motion/react";
 
 function timeGreeting() {
@@ -9,7 +10,10 @@ function timeGreeting() {
   return "Good evening";
 }
 
-export function WelcomeHeader({ firstName }: { firstName?: string }) {
+export function WelcomeHeader() {
+  const { user, isLoaded } = useUser();
+  const firstName = isLoaded ? user?.firstName : undefined;
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}

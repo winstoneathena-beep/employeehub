@@ -2,23 +2,29 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useSignUp } from "@clerk/nextjs";
 import { motion } from "motion/react";
 import { AuthCardFrame } from "./auth-card-frame";
 import { AuthSubmitButton } from "./auth-submit-button";
 import { cn } from "@/lib/utils";
 
 const CODE_LENGTH = 6;
-const RESEND_SECONDS = 600; // 10 min
+const RESEND_SECONDS = 600; // 10 min — matches Clerk's default code lifetime
 
 export function VerifyCard() {
   const router = useRouter();
+  const { signUp, fetchStatus } = useSignUp();
+
   const [digits, setDigits] = useState<string[]>(
     Array.from({ length: CODE_LENGTH }, () => ""),
   );
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resendNotice, setResendNotice] = useState<string | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(RESEND_SECONDS);
   const inputsRef = useRef<Array<HTMLInputElement | null>>([]);
+
+  const isReady = !!signUp && fetchStatus !== "fetching";
 
   useEffect(() => {
     if (secondsLeft <= 0) return;
@@ -60,8 +66,10 @@ export function VerifyCard() {
       inputsRef.current[i + 1]?.focus();
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!signUp) return;
+
     const code = digits.join("");
     if (code.length < CODE_LENGTH) {
       setError("Enter all 6 digits.");
@@ -69,18 +77,57 @@ export function VerifyCard() {
     }
     setError(null);
     setIsLoading(true);
-    // TODO(clerk): replace with Clerk attemptEmailVerification once env keys are set
-    setTimeout(() => {
+
+    const { error: verifyError } = await signUp.verifications.verifyEmailCode({
+      code,
+    });
+
+    if (verifyError) {
+      setError(
+        verifyError.longMessage ??
+          verifyError.message ??
+          "Verification failed",
+      );
       setIsLoading(false);
-      router.push("/pending");
-    }, 1200);
+      return;
+    }
+
+    // Email verified → activate the session and route to the Hub.
+    // The original brief required director approval after verification, but
+    // we dropped that gate — the `@goparkwell.com` email check is enough.
+    // Server-side enforcement of the email domain still happens via a Clerk
+    // webhook (PR 2B) that deletes any user whose email isn't @goparkwell.com.
+    const { error: finalizeError } = await signUp.finalize();
+
+    if (finalizeError) {
+      setError(finalizeError.message ?? "Could not start session");
+      setIsLoading(false);
+      return;
+    }
+
+    router.push("/");
   }
 
-  function handleResend() {
-    // TODO(clerk): trigger resend once wired
+  async function handleResend() {
+    if (!signUp) return;
+
+    const { error: sendError } = await signUp.verifications.sendEmailCode();
+
+    if (sendError) {
+      setError(
+        sendError.longMessage ??
+          sendError.message ??
+          "Could not resend code",
+      );
+      return;
+    }
+
     setSecondsLeft(RESEND_SECONDS);
     setDigits(Array.from({ length: CODE_LENGTH }, () => ""));
     inputsRef.current[0]?.focus();
+    setResendNotice("New code sent. Check your inbox.");
+    setError(null);
+    setTimeout(() => setResendNotice(null), 5000);
   }
 
   const mm = Math.floor(secondsLeft / 60)
@@ -123,8 +170,20 @@ export function VerifyCard() {
             initial={{ opacity: 0, y: -4 }}
             animate={{ opacity: 1, y: 0 }}
             className="rounded-md border border-parkwell-red/30 bg-parkwell-red/10 px-3 py-2 text-center text-xs text-parkwell-red"
+            role="alert"
           >
             {error}
+          </motion.p>
+        ) : null}
+
+        {resendNotice ? (
+          <motion.p
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="rounded-md border border-parkwell-green/30 bg-parkwell-green/10 px-3 py-2 text-center text-xs text-parkwell-green"
+            role="status"
+          >
+            {resendNotice}
           </motion.p>
         ) : null}
 
@@ -135,14 +194,16 @@ export function VerifyCard() {
           </span>
         </div>
 
-        <AuthSubmitButton isLoading={isLoading}>Verify</AuthSubmitButton>
+        <AuthSubmitButton isLoading={isLoading} disabled={!isReady}>
+          Verify
+        </AuthSubmitButton>
 
         <div className="pt-1 text-center text-xs text-white/60">
           Didn&apos;t get it?{" "}
           <button
             type="button"
             onClick={handleResend}
-            disabled={secondsLeft > RESEND_SECONDS - 30}
+            disabled={secondsLeft > RESEND_SECONDS - 30 || !isReady}
             className="font-medium text-white transition-colors hover:text-white/70 disabled:cursor-not-allowed disabled:text-white/30"
           >
             Resend code

@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useSignIn } from "@clerk/nextjs";
 import { Eye, EyeOff, Lock, Mail } from "lucide-react";
 import { motion } from "motion/react";
 import { AuthCardFrame } from "./auth-card-frame";
@@ -9,18 +11,48 @@ import { AuthInput } from "./auth-input";
 import { AuthSubmitButton } from "./auth-submit-button";
 
 export function SignInCard() {
+  const router = useRouter();
+  const { signIn, fetchStatus } = useSignIn();
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [focused, setFocused] = useState<"email" | "password" | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  function handleSubmit(e: React.FormEvent) {
+  const isReady = !!signIn && fetchStatus !== "fetching";
+
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    // TODO(clerk): replace with Clerk signIn.create() once env keys are set
+    if (!signIn) return;
+
     setIsLoading(true);
-    setTimeout(() => setIsLoading(false), 1500);
+    setError(null);
+
+    // Step 1: submit identifier + password
+    const { error: pwError } = await signIn.password({
+      identifier: email,
+      password,
+    });
+
+    if (pwError) {
+      setError(pwError.longMessage ?? pwError.message ?? "Sign in failed");
+      setIsLoading(false);
+      return;
+    }
+
+    // Step 2: activate the session (was setActive() in pre-v7 Clerk)
+    const { error: finalizeError } = await signIn.finalize();
+
+    if (finalizeError) {
+      setError(finalizeError.message ?? "Could not start session");
+      setIsLoading(false);
+      return;
+    }
+
+    router.push("/");
   }
 
   return (
@@ -92,7 +124,18 @@ export function SignInCard() {
           </Link>
         </div>
 
-        <AuthSubmitButton isLoading={isLoading} className="mt-5">
+        {error ? (
+          <motion.p
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="rounded-md border border-parkwell-red/30 bg-parkwell-red/10 px-3 py-2 text-xs text-parkwell-red"
+            role="alert"
+          >
+            {error}
+          </motion.p>
+        ) : null}
+
+        <AuthSubmitButton isLoading={isLoading} disabled={!isReady} className="mt-5">
           Sign in
         </AuthSubmitButton>
 
