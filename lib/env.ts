@@ -14,10 +14,6 @@ import { z } from "zod";
 
 /** Empty strings in dotenv files should be treated as "not set", not as ""
  *  (which trips .url() / .email() validators). */
-const optionalUrl = z.preprocess(
-  (v) => (v === "" ? undefined : v),
-  z.string().url().optional(),
-);
 const optionalEmail = z.preprocess(
   (v) => (v === "" ? undefined : v),
   z.string().email().optional(),
@@ -52,12 +48,22 @@ const serverSchema = z.object({
   EMAIL_REPLY_TO: optionalEmail,
 
   // ── Database (Postgres / Neon) ────────────────────────
-  // Optional until PR 2B wires Drizzle.
-  DATABASE_URL: optionalUrl,
+  // Required now that Drizzle is wired (Phase 1A). Vercel auto-injects
+  // this when Postgres is connected to the project; local dev should
+  // copy it from the Vercel dashboard into .env.local.
+  DATABASE_URL: z.string().url(),
 
   // ── Cookie domain for cross-subdomain sessions ────────
   // Production: ".parkwellteamhub.com". Local dev: leave blank.
   NEXT_PUBLIC_COOKIE_DOMAIN: optionalString,
+
+  // ── Bootstrap admins ──────────────────────────────────
+  // Comma-separated list of email addresses (case-insensitive) that
+  // should be granted the admin role on sign-up / when the webhook
+  // sees their user.updated event. Use this to elect the first admin
+  // before any admin exists to promote others through the UI.
+  // Example: ADMIN_EMAILS=winstone@goparkwell.com,joel@goparkwell.com
+  ADMIN_EMAILS: optionalString,
 });
 
 const parsed = serverSchema.safeParse(process.env);
