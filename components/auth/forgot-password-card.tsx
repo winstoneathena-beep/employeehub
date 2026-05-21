@@ -12,22 +12,34 @@ import { AuthSubmitButton } from "./auth-submit-button";
 import { cn } from "@/lib/utils";
 
 const CODE_LENGTH = 6;
+const RESEND_SECONDS = 600; // 10 min — matches Clerk's default code lifetime
+
+type Step = "email" | "code" | "password";
 
 /**
- * Two-step password reset using Clerk's resetPasswordEmailCode flow.
- *   Step 1: user enters email → we ask Clerk to send a 6-digit reset code.
- *   Step 2: user enters the code + a new password → we verify the code,
- *           submit the new password, and finalize the session.
+ * Three-step password reset using Clerk's resetPasswordEmailCode flow.
  *
- * Why one route with internal state instead of two routes: Clerk's
- * signIn client state lives in memory, so a full page navigation between
- * steps would lose it. Single page sidesteps the issue.
+ *   step 1 "email"     → signIn.create({ identifier }) +
+ *                        signIn.resetPasswordEmailCode.sendCode()
+ *   step 2 "code"      → resetPasswordEmailCode.verifyCode({ code })
+ *                        (code is single-use; after this call the sign-in
+ *                        is in 'needs_new_password' state and verifyCode
+ *                        can't be called again)
+ *   step 3 "password"  → resetPasswordEmailCode.submitPassword({ password })
+ *                        + signIn.finalize()
+ *
+ * Each step has its own submit handler and its own error state, so a
+ * weak-password error in step 3 doesn't make us re-call verifyCode
+ * (which would fail because the code is already consumed).
+ *
+ * Single-page state machine instead of three separate routes — Clerk's
+ * signIn lives in client memory, so a hard navigation would lose it.
  */
 export function ForgotPasswordCard() {
   const router = useRouter();
   const { signIn, fetchStatus } = useSignIn();
 
-  const [step, setStep] = useState<"email" | "reset">("email");
+  const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
   const [digits, setDigits] = useState<string[]>(
     Array.from({ length: CODE_LENGTH }, () => ""),
@@ -41,57 +53,44 @@ export function ForgotPasswordCard() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [secondsLeft, setSecondsLeft] = useState(RESEND_SECONDS);
   const inputsRef = useRef<Array<HTMLInputElement | null>>([]);
 
   const isReady = !!signIn && fetchStatus !== "fetching";
 
+  // Auto-focus the first code box when entering step 2; auto-focus
+  // password box when entering step 3.
   useEffect(() => {
-    if (step === "reset") inputsRef.current[0]?.focus();
+    if (step === "code") {
+      setTimeout(() => inputsRef.current[0]?.focus(), 50);
+    }
   }, [step]);
 
-  function setDigitAt(i: number, value: string) {
-    const cleaned = value.replace(/[^0-9]/g, "").slice(0, 1);
-    setDigits((d) => {
-      const next = [...d];
-      next[i] = cleaned;
-      return next;
-    });
-    if (cleaned && i < CODE_LENGTH - 1) {
-      inputsRef.current[i + 1]?.focus();
-    }
+  // Code-lifetime countdown (visible on step 2).
+  useEffect(() => {
+    if (step !== "code" || secondsLeft <= 0) return;
+    const t = setInterval(() => setSecondsLeft((s) => s - 1), 1000);
+    return () => clearInterval(t);
+  }, [step, secondsLeft]);
+
+  function clearTransientUI() {
+    setError(null);
+    setNotice(null);
   }
 
-  function handlePaste(e: React.ClipboardEvent<HTMLInputElement>) {
-    const pasted = e.clipboardData.getData("text").replace(/[^0-9]/g, "");
-    if (!pasted) return;
-    e.preventDefault();
-    const next = Array.from({ length: CODE_LENGTH }, (_, i) => pasted[i] ?? "");
-    setDigits(next);
-    const focusIdx = Math.min(pasted.length, CODE_LENGTH - 1);
-    inputsRef.current[focusIdx]?.focus();
+  function showNotice(msg: string) {
+    setNotice(msg);
+    setTimeout(() => setNotice(null), 5000);
   }
 
-  function handleKeyDown(
-    e: React.KeyboardEvent<HTMLInputElement>,
-    i: number,
-  ) {
-    if (e.key === "Backspace" && !digits[i] && i > 0) {
-      inputsRef.current[i - 1]?.focus();
-    }
-    if (e.key === "ArrowLeft" && i > 0) inputsRef.current[i - 1]?.focus();
-    if (e.key === "ArrowRight" && i < CODE_LENGTH - 1)
-      inputsRef.current[i + 1]?.focus();
-  }
-
-  // ── Step 1: ask Clerk to email a 6-digit reset code ─────────────
+  // ── Step 1: send the reset code ─────────────────────────────────
   async function handleSendCode(e: React.FormEvent) {
     e.preventDefault();
     if (!signIn) return;
 
-    setError(null);
+    clearTransientUI();
     setIsLoading(true);
 
-    // First create the sign-in attempt with the email as the identifier.
     const { error: createError } = await signIn.create({ identifier: email });
     if (createError) {
       setError(
@@ -103,7 +102,6 @@ export function ForgotPasswordCard() {
       return;
     }
 
-    // Now request the reset code.
     const { error: sendError } = await signIn.resetPasswordEmailCode.sendCode();
     if (sendError) {
       setError(
@@ -116,13 +114,13 @@ export function ForgotPasswordCard() {
     }
 
     setIsLoading(false);
-    setStep("reset");
-    setNotice("Code sent. Check your inbox.");
-    setTimeout(() => setNotice(null), 5000);
+    setSecondsLeft(RESEND_SECONDS);
+    setStep("code");
+    showNotice("Code sent. Check your inbox.");
   }
 
-  // ── Step 2: verify the code + submit the new password ──────────
-  async function handleResetPassword(e: React.FormEvent) {
+  // ── Step 2a: verify the 6-digit code (one-shot, code is consumed) ─
+  async function handleVerifyCode(e: React.FormEvent) {
     e.preventDefault();
     if (!signIn) return;
 
@@ -131,20 +129,13 @@ export function ForgotPasswordCard() {
       setError("Enter all 6 digits.");
       return;
     }
-    if (password.length < 8) {
-      setError("Password must be at least 8 characters.");
-      return;
-    }
-    if (password !== confirm) {
-      setError("Passwords do not match.");
-      return;
-    }
 
-    setError(null);
+    clearTransientUI();
     setIsLoading(true);
 
     const { error: verifyError } =
       await signIn.resetPasswordEmailCode.verifyCode({ code });
+
     if (verifyError) {
       setError(
         verifyError.longMessage ??
@@ -155,9 +146,53 @@ export function ForgotPasswordCard() {
       return;
     }
 
+    setIsLoading(false);
+    setStep("password");
+  }
+
+  // ── Step 2b: resend code (still in code-entry state) ────────────
+  async function handleResendCode() {
+    if (!signIn) return;
+    clearTransientUI();
+    const { error: sendError } = await signIn.resetPasswordEmailCode.sendCode();
+    if (sendError) {
+      setError(
+        sendError.longMessage ??
+          sendError.message ??
+          "Could not resend code.",
+      );
+      return;
+    }
+    setSecondsLeft(RESEND_SECONDS);
+    setDigits(Array.from({ length: CODE_LENGTH }, () => ""));
+    inputsRef.current[0]?.focus();
+    showNotice("New code sent. Check your inbox.");
+  }
+
+  // ── Step 3: submit the new password, then sign in ───────────────
+  async function handleSetPassword(e: React.FormEvent) {
+    e.preventDefault();
+    if (!signIn) return;
+
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+    if (password !== confirm) {
+      setError("Passwords do not match.");
+      return;
+    }
+
+    clearTransientUI();
+    setIsLoading(true);
+
     const { error: submitError } =
       await signIn.resetPasswordEmailCode.submitPassword({ password });
+
     if (submitError) {
+      // Clerk strength rules / pwned-password check / etc. land here.
+      // We stay on the password step so the user can pick a stronger one
+      // without losing the verified-code state.
       setError(
         submitError.longMessage ??
           submitError.message ??
@@ -177,6 +212,61 @@ export function ForgotPasswordCard() {
     router.push("/");
   }
 
+  // ── "Start over" — clear all state, drop back to email step ─────
+  async function handleStartOver() {
+    clearTransientUI();
+    setDigits(Array.from({ length: CODE_LENGTH }, () => ""));
+    setPassword("");
+    setConfirm("");
+    setStep("email");
+    if (signIn) {
+      // Best-effort: clear Clerk's in-progress sign-in. Ignore errors —
+      // worst case it's already cleared.
+      await signIn.reset();
+    }
+  }
+
+  // ── Code input helpers ──────────────────────────────────────────
+  function setDigitAt(i: number, value: string) {
+    const cleaned = value.replace(/[^0-9]/g, "").slice(0, 1);
+    setDigits((d) => {
+      const next = [...d];
+      next[i] = cleaned;
+      return next;
+    });
+    if (cleaned && i < CODE_LENGTH - 1) {
+      inputsRef.current[i + 1]?.focus();
+    }
+  }
+  function handlePaste(e: React.ClipboardEvent<HTMLInputElement>) {
+    const pasted = e.clipboardData.getData("text").replace(/[^0-9]/g, "");
+    if (!pasted) return;
+    e.preventDefault();
+    const next = Array.from({ length: CODE_LENGTH }, (_, i) => pasted[i] ?? "");
+    setDigits(next);
+    const focusIdx = Math.min(pasted.length, CODE_LENGTH - 1);
+    inputsRef.current[focusIdx]?.focus();
+  }
+  function handleCodeKeyDown(
+    e: React.KeyboardEvent<HTMLInputElement>,
+    i: number,
+  ) {
+    if (e.key === "Backspace" && !digits[i] && i > 0) {
+      inputsRef.current[i - 1]?.focus();
+    }
+    if (e.key === "ArrowLeft" && i > 0) inputsRef.current[i - 1]?.focus();
+    if (e.key === "ArrowRight" && i < CODE_LENGTH - 1)
+      inputsRef.current[i + 1]?.focus();
+  }
+
+  const mm = Math.floor(secondsLeft / 60)
+    .toString()
+    .padStart(2, "0");
+  const ss = (secondsLeft % 60).toString().padStart(2, "0");
+
+  // ──────────────────────────────────────────────────────────────────
+  // STEP 1: EMAIL
+  // ──────────────────────────────────────────────────────────────────
   if (step === "email") {
     return (
       <AuthCardFrame
@@ -227,43 +317,109 @@ export function ForgotPasswordCard() {
     );
   }
 
-  // Step 2: reset
+  // ──────────────────────────────────────────────────────────────────
+  // STEP 2: CODE
+  // ──────────────────────────────────────────────────────────────────
+  if (step === "code") {
+    return (
+      <AuthCardFrame
+        title="Enter your code"
+        subtitle={`We sent a 6-digit code to ${email}`}
+      >
+        <form onSubmit={handleVerifyCode} className="space-y-5">
+          <div className="flex justify-center gap-2">
+            {digits.map((d, i) => (
+              <input
+                key={i}
+                ref={(el) => {
+                  inputsRef.current[i] = el;
+                }}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={1}
+                value={d}
+                onChange={(e) => setDigitAt(i, e.target.value)}
+                onKeyDown={(e) => handleCodeKeyDown(e, i)}
+                onPaste={handlePaste}
+                className={cn(
+                  "h-12 w-10 rounded-lg border border-white/15 bg-white/5 text-center text-lg font-semibold text-white",
+                  "outline-none transition-all duration-200",
+                  "focus:border-parkwell-blue/60 focus:bg-white/10 focus:ring-2 focus:ring-parkwell-blue/40",
+                )}
+                aria-label={`Digit ${i + 1}`}
+              />
+            ))}
+          </div>
+
+          {error ? (
+            <motion.p
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="rounded-md border border-parkwell-red/30 bg-parkwell-red/10 px-3 py-2 text-center text-xs text-parkwell-red"
+              role="alert"
+            >
+              {error}
+            </motion.p>
+          ) : null}
+
+          {notice ? (
+            <motion.p
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="rounded-md border border-parkwell-green/30 bg-parkwell-green/10 px-3 py-2 text-center text-xs text-parkwell-green"
+              role="status"
+            >
+              {notice}
+            </motion.p>
+          ) : null}
+
+          <div className="text-center text-xs text-white/50">
+            Code expires in{" "}
+            <span className="font-mono text-white/80">
+              {mm}:{ss}
+            </span>
+          </div>
+
+          <AuthSubmitButton isLoading={isLoading} disabled={!isReady}>
+            Verify code
+          </AuthSubmitButton>
+
+          <div className="flex items-center justify-between pt-1 text-xs text-white/60">
+            <button
+              type="button"
+              onClick={handleResendCode}
+              disabled={secondsLeft > RESEND_SECONDS - 30 || !isReady}
+              className="font-medium text-white transition-colors hover:text-white/70 disabled:cursor-not-allowed disabled:text-white/30"
+            >
+              Resend code
+            </button>
+            <button
+              type="button"
+              onClick={handleStartOver}
+              className="font-medium text-white transition-colors hover:text-white/70"
+            >
+              Use different email
+            </button>
+          </div>
+        </form>
+      </AuthCardFrame>
+    );
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  // STEP 3: NEW PASSWORD
+  // ──────────────────────────────────────────────────────────────────
   return (
     <AuthCardFrame
-      title="Enter your code"
-      subtitle={`We sent a 6-digit code to ${email}. Use it to set a new password.`}
-      width="md"
+      title="Set a new password"
+      subtitle="Pick something strong — 8+ characters"
     >
-      <form onSubmit={handleResetPassword} className="space-y-5">
-        <div className="flex justify-center gap-2">
-          {digits.map((d, i) => (
-            <input
-              key={i}
-              ref={(el) => {
-                inputsRef.current[i] = el;
-              }}
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              maxLength={1}
-              value={d}
-              onChange={(e) => setDigitAt(i, e.target.value)}
-              onKeyDown={(e) => handleKeyDown(e, i)}
-              onPaste={handlePaste}
-              className={cn(
-                "h-12 w-10 rounded-lg border border-white/15 bg-white/5 text-center text-lg font-semibold text-white",
-                "outline-none transition-all duration-200",
-                "focus:border-parkwell-blue/60 focus:bg-white/10 focus:ring-2 focus:ring-parkwell-blue/40",
-              )}
-              aria-label={`Digit ${i + 1}`}
-            />
-          ))}
-        </div>
-
+      <form onSubmit={handleSetPassword} className="space-y-4">
         <AuthInput
           type={showPassword ? "text" : "password"}
           name="password"
           autoComplete="new-password"
-          placeholder="New password (8+ characters)"
+          placeholder="New password"
           icon={<Lock className="h-4 w-4" />}
           trailing={
             <button
@@ -305,41 +461,24 @@ export function ForgotPasswordCard() {
           <motion.p
             initial={{ opacity: 0, y: -4 }}
             animate={{ opacity: 1, y: 0 }}
-            className="rounded-md border border-parkwell-red/30 bg-parkwell-red/10 px-3 py-2 text-center text-xs text-parkwell-red"
+            className="rounded-md border border-parkwell-red/30 bg-parkwell-red/10 px-3 py-2 text-xs text-parkwell-red"
             role="alert"
           >
             {error}
           </motion.p>
         ) : null}
 
-        {notice ? (
-          <motion.p
-            initial={{ opacity: 0, y: -4 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="rounded-md border border-parkwell-green/30 bg-parkwell-green/10 px-3 py-2 text-center text-xs text-parkwell-green"
-            role="status"
-          >
-            {notice}
-          </motion.p>
-        ) : null}
-
-        <AuthSubmitButton isLoading={isLoading} disabled={!isReady}>
-          Reset password & sign in
+        <AuthSubmitButton isLoading={isLoading} disabled={!isReady} className="mt-2">
+          Set password & sign in
         </AuthSubmitButton>
 
-        <div className="pt-1 text-center text-xs text-white/60">
+        <div className="pt-2 text-center text-xs text-white/60">
           <button
             type="button"
-            onClick={() => {
-              setStep("email");
-              setDigits(Array.from({ length: CODE_LENGTH }, () => ""));
-              setPassword("");
-              setConfirm("");
-              setError(null);
-            }}
+            onClick={handleStartOver}
             className="font-medium text-white transition-colors hover:text-white/70"
           >
-            Use a different email
+            Start over
           </button>
         </div>
       </form>
