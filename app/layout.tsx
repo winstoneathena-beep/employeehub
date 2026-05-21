@@ -50,9 +50,22 @@ export default function RootLayout({
           fontFamily: "var(--font-geist-sans), Helvetica Neue, Arial, sans-serif",
         },
         elements: {
-          // Used for any Clerk-rendered fallbacks (e.g., UserButton dropdown).
-          // Our auth pages use headless hooks, so this is just defensive.
-          card: "bg-black/60 backdrop-blur-xl border border-white/10",
+          // Force text color on Clerk's root + popovers + modals so they
+          // don't inherit our body's `color: var(--foreground)` (which is
+          // dark Ink in light mode → unreadable dark-on-dark in the Clerk
+          // dropdown). Clerk's modals portal directly to <body>, so they
+          // pick up that inherited color unless we explicitly set ours.
+          rootBox: "text-white",
+          userButtonPopoverCard:
+            "bg-black/80 backdrop-blur-xl border border-white/10 text-white",
+          userButtonPopoverActionButton: "text-white hover:bg-white/5",
+          userButtonPopoverActionButtonText: "text-white",
+          userButtonPopoverActionButtonIcon: "text-white/70",
+          userButtonPopoverFooter: "text-white/60",
+          modalContent:
+            "bg-[#0a202e] text-white border border-white/10",
+          modalCloseButton: "text-white hover:text-white/80",
+          card: "bg-black/80 backdrop-blur-xl border border-white/10 text-white",
         },
       }}
     >
